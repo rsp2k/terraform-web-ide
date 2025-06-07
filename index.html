@@ -1,0 +1,921 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Terraform Web IDE</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js"></script>
+    <script>
+        // Configure Monaco paths and declare initialization flag
+        let monacoInitialized = false;
+        
+        if (typeof require !== 'undefined') {
+            require.config({ 
+                paths: { 
+                    vs: 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs' 
+                },
+                'vs/nls': {
+                    availableLanguages: {
+                        '*': ''  // Use empty string to avoid language bundle issues
+                    }
+                }
+            });
+        }
+    </script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/editor/editor.main.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .ide-container {
+            display: flex;
+            height: 100vh;
+        }
+
+        .sidebar {
+            width: 250px;
+            background: #252526;
+            border-right: 1px solid #3e3e42;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .sidebar-header {
+            padding: 10px;
+            background: #2d2d30;
+            border-bottom: 1px solid #3e3e42;
+            font-size: 12px;
+            text-transform: uppercase;
+            font-weight: bold;
+            color: #cccccc;
+        }
+
+        .file-explorer {
+            flex: 1;
+            overflow-y: auto;
+        }
+
+        .file-item {
+            padding: 5px 15px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            font-size: 13px;
+        }
+
+        .file-item:hover {
+            background: #2a2d2e;
+        }
+
+        .file-item.active {
+            background: #094771;
+            color: #ffffff;
+        }
+
+        .file-icon {
+            width: 16px;
+            height: 16px;
+            margin-right: 8px;
+            display: inline-block;
+        }
+
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .tab-bar {
+            background: #2d2d30;
+            border-bottom: 1px solid #3e3e42;
+            display: flex;
+            min-height: 35px;
+        }
+
+        .tab {
+            padding: 8px 15px;
+            background: #2d2d30;
+            border-right: 1px solid #3e3e42;
+            cursor: pointer;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            position: relative;
+        }
+
+        .tab.active {
+            background: #1e1e1e;
+            color: #ffffff;
+        }
+
+        .tab:hover {
+            background: #323233;
+        }
+
+        .tab-close {
+            margin-left: 10px;
+            color: #888;
+            cursor: pointer;
+        }
+
+        .tab-close:hover {
+            color: #fff;
+        }
+
+        .editor-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .editor {
+            flex: 1;
+            background: #1e1e1e;
+        }
+
+        .terminal-container {
+            height: 250px;
+            background: #0c0c0c;
+            border-top: 1px solid #3e3e42;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .terminal-header {
+            background: #2d2d30;
+            padding: 8px 15px;
+            font-size: 12px;
+            color: #cccccc;
+            border-bottom: 1px solid #3e3e42;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .terminal {
+            flex: 1;
+            padding: 10px;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 13px;
+            color: #00ff00;
+            overflow-y: auto;
+            background: #0c0c0c;
+        }
+
+        .terminal-input {
+            display: flex;
+            align-items: center;
+            padding: 5px 10px;
+            background: #0c0c0c;
+        }
+
+        .terminal-prompt {
+            color: #00ff00;
+            margin-right: 5px;
+        }
+
+        .terminal-command {
+            flex: 1;
+            background: transparent;
+            border: none;
+            color: #00ff00;
+            font-family: inherit;
+            font-size: inherit;
+            outline: none;
+        }
+
+        .toolbar {
+            background: #2d2d30;
+            padding: 8px 15px;
+            border-bottom: 1px solid #3e3e42;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .btn {
+            background: #0e639c;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        .btn:hover {
+            background: #1177bb;
+        }
+
+        .btn.secondary {
+            background: #5a5a5a;
+        }
+
+        .btn.secondary:hover {
+            background: #6a6a6a;
+        }
+
+        .status-bar {
+            background: #007acc;
+            color: white;
+            padding: 4px 15px;
+            font-size: 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        /* Terraform syntax highlighting */
+        .monaco-editor {
+            background: #1e1e1e !important;
+        }
+
+        .line-numbers {
+            display: none; /* Monaco handles line numbers */
+        }
+
+        .editor-with-numbers {
+            display: flex;
+            height: 100%;
+        }
+
+        .new-file-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            display: none;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal-content {
+            background: #2d2d30;
+            padding: 20px;
+            border-radius: 5px;
+            border: 1px solid #3e3e42;
+        }
+
+        .modal-input {
+            background: #1e1e1e;
+            border: 1px solid #3e3e42;
+            color: #d4d4d4;
+            padding: 8px;
+            width: 300px;
+            font-family: inherit;
+        }
+
+        .terraform-commands {
+            display: flex;
+            gap: 5px;
+            margin-left: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="ide-container">
+        <div class="sidebar">
+            <div class="sidebar-header">Explorer</div>
+            <div class="file-explorer" id="fileExplorer">
+                <div class="file-item active" data-file="main.tf">
+                    <span class="file-icon">📄</span>main.tf
+                </div>
+                <div class="file-item" data-file="variables.tf">
+                    <span class="file-icon">📄</span>variables.tf
+                </div>
+                <div class="file-item" data-file="outputs.tf">
+                    <span class="file-icon">📄</span>outputs.tf
+                </div>
+                <div class="file-item" data-file="terraform.tfvars">
+                    <span class="file-icon">📄</span>terraform.tfvars
+                </div>
+                <div class="file-item" data-file="README.md">
+                    <span class="file-icon">📝</span>README.md
+                </div>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="toolbar">
+                <button class="btn" onclick="newFile()">New File</button>
+                <button class="btn secondary" onclick="saveFile()">Save</button>
+                <button class="btn secondary" onclick="formatCode()">Format</button>
+                <div class="terraform-commands">
+                    <button class="btn" onclick="runTerraformCommand('init')">tf init</button>
+                    <button class="btn" onclick="runTerraformCommand('plan')">tf plan</button>
+                    <button class="btn" onclick="runTerraformCommand('apply')">tf apply</button>
+                    <button class="btn" onclick="runTerraformCommand('destroy')">tf destroy</button>
+                </div>
+            </div>
+
+            <div class="tab-bar" id="tabBar">
+                <div class="tab active" data-file="main.tf">
+                    main.tf
+                    <span class="tab-close" onclick="closeTab(event, 'main.tf')">&times;</span>
+                </div>
+            </div>
+
+            <div class="editor-container">
+                <div class="editor-with-numbers">
+                    <div class="editor" id="editor"></div>
+                </div>
+            </div>
+
+            <div class="terminal-container">
+                <div class="terminal-header">
+                    <span>Terminal</span>
+                    <button class="btn secondary" onclick="clearTerminal()">Clear</button>
+                </div>
+                <div class="terminal" id="terminal"></div>
+                <div class="terminal-input">
+                    <span class="terminal-prompt">$</span>
+                    <input type="text" class="terminal-command" id="terminalInput" placeholder="Enter command...">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="status-bar">
+        <span>Terraform IDE - Ready</span>
+        <span id="currentFile">main.tf</span>
+    </div>
+
+    <div class="new-file-modal" id="newFileModal">
+        <div class="modal-content">
+            <h3 style="margin-bottom: 15px;">Create New File</h3>
+            <input type="text" class="modal-input" id="newFileName" placeholder="filename.tf">
+            <div style="margin-top: 15px;">
+                <button class="btn" onclick="createFile()">Create</button>
+                <button class="btn secondary" onclick="closeModal()">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Monaco Editor setup - variables declared in head script
+        let monacoEditor;
+        let models = {};
+        
+        // File system simulation
+        const files = {
+            'main.tf': `# Main Terraform configuration
+terraform {
+  required_version = ">= 1.0"
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+
+provider "aws" {
+  region = var.aws_region
+}
+
+resource "aws_instance" "example" {
+  ami           = var.ami_id
+  instance_type = var.instance_type
+
+  tags = {
+    Name        = var.instance_name
+    Environment = var.environment
+  }
+}`,
+            'variables.tf': `# Input variables
+variable "aws_region" {
+  description = "AWS region"
+  type        = string
+  default     = "us-west-2"
+}
+
+variable "ami_id" {
+  description = "AMI ID for the instance"
+  type        = string
+  default     = "ami-0c55b159cbfafe1d0"
+}
+
+variable "instance_type" {
+  description = "EC2 instance type"
+  type        = string
+  default     = "t2.micro"
+}
+
+variable "instance_name" {
+  description = "Name tag for the instance"
+  type        = string
+  default     = "terraform-example"
+}
+
+variable "environment" {
+  description = "Environment tag"
+  type        = string
+  default     = "development"
+}`,
+            'outputs.tf': `# Output values
+output "instance_id" {
+  description = "ID of the EC2 instance"
+  value       = aws_instance.example.id
+}
+
+output "instance_public_ip" {
+  description = "Public IP address of the EC2 instance"
+  value       = aws_instance.example.public_ip
+}
+
+output "instance_private_ip" {
+  description = "Private IP address of the EC2 instance"
+  value       = aws_instance.example.private_ip
+}`,
+            'terraform.tfvars': `# Variable definitions
+aws_region      = "us-west-2"
+ami_id          = "ami-0c55b159cbfafe1d0"
+instance_type   = "t2.micro"
+instance_name   = "my-terraform-instance"
+environment     = "production"`,
+            'README.md': `# Terraform Project
+
+This is a sample Terraform project that creates an AWS EC2 instance.
+
+## Prerequisites
+
+- Terraform >= 1.0
+- AWS CLI configured
+- Appropriate AWS permissions
+
+## Usage
+
+1. Initialize Terraform:
+   \`\`\`
+   terraform init
+   \`\`\`
+
+2. Review the plan:
+   \`\`\`
+   terraform plan
+   \`\`\`
+
+3. Apply the configuration:
+   \`\`\`
+   terraform apply
+   \`\`\`
+
+4. Destroy resources when done:
+   \`\`\`
+   terraform destroy
+   \`\`\`
+
+## Files
+
+- \`main.tf\` - Main Terraform configuration
+- \`variables.tf\` - Input variable definitions
+- \`outputs.tf\` - Output value definitions
+- \`terraform.tfvars\` - Variable value assignments
+`
+        };
+
+        let currentFile = 'main.tf';
+        let openTabs = ['main.tf'];
+
+        // Initialize Monaco Editor with improved error handling and prevent double initialization
+        function initializeMonaco() {
+            // Prevent double initialization
+            if (monacoInitialized) {
+                console.log('⚠️ Monaco already initialized, skipping...');
+                return;
+            }
+            
+            console.log('🚀 Starting Monaco Editor initialization...');
+            
+            // Check if Monaco is available
+            if (typeof monaco === 'undefined') {
+                console.log('⏳ Monaco not ready yet, retrying in 200ms...');
+                setTimeout(initializeMonaco, 200);
+                return;
+            }
+
+            console.log('✅ Monaco Editor detected, proceeding with setup...');
+
+            try {
+                // Mark as initialized early to prevent double initialization
+                monacoInitialized = true;
+
+                // Check if Terraform language is already registered
+                const existingLanguages = monaco.languages.getLanguages();
+                const terraformExists = existingLanguages.some(lang => lang.id === 'terraform');
+                
+                if (!terraformExists) {
+                    // Register Terraform language
+                    console.log('📝 Registering Terraform language...');
+                    monaco.languages.register({ id: 'terraform' });
+                    
+                    // Define Terraform syntax
+                    console.log('🎨 Setting up Terraform syntax highlighting...');
+                    monaco.languages.setMonarchTokensProvider('terraform', {
+                        tokenizer: {
+                            root: [
+                                [/#.*$/, 'comment'],
+                                [/".*?"/, 'string'],
+                                [/'.*?'/, 'string'],
+                                [/\b(resource|data|variable|output|locals|terraform|provider|module)\b/, 'keyword'],
+                                [/\b(true|false|null)\b/, 'boolean'],
+                                [/\b\d+(\.\d+)?\b/, 'number'],
+                                [/\b(string|number|bool|list|map|set|object|tuple|any)\b/, 'type'],
+                                [/\b(var|local)\b/, 'variable'],
+                                [/[{}()\[\]]/, 'bracket'],
+                                [/[<>]=?|[!=]=?|&&|\|\|/, 'operator'],
+                                [/[a-zA-Z_]\w*/, 'identifier']
+                            ]
+                        }
+                    });
+                } else {
+                    console.log('📝 Terraform language already registered, skipping...');
+                }
+
+                // Define theme colors for Terraform (safe to call multiple times)
+                console.log('🌙 Setting up Terraform dark theme...');
+                monaco.editor.defineTheme('terraform-dark', {
+                    base: 'vs-dark',
+                    inherit: true,
+                    rules: [
+                        { token: 'comment', foreground: '6A9955' },
+                        { token: 'keyword', foreground: '569CD6', fontStyle: 'bold' },
+                        { token: 'string', foreground: 'CE9178' },
+                        { token: 'number', foreground: 'B5CEA8' },
+                        { token: 'boolean', foreground: '569CD6' },
+                        { token: 'type', foreground: '4EC9B0' },
+                        { token: 'variable', foreground: '9CDCFE' },
+                        { token: 'identifier', foreground: 'D4D4D4' }
+                    ],
+                    colors: {
+                        'editor.background': '#1e1e1e',
+                        'editor.foreground': '#d4d4d4',
+                        'editor.lineHighlightBackground': '#2a2d2e',
+                        'editorLineNumber.foreground': '#858585',
+                        'editorGutter.background': '#1e1e1e'
+                    }
+                });
+
+                // Create editor instance only if it doesn't exist
+                console.log('⚙️ Creating Monaco Editor instance...');
+                const editorElement = document.getElementById('editor');
+                if (!editorElement) {
+                    throw new Error('Editor element not found in DOM');
+                }
+
+                // Dispose existing editor if it exists
+                if (monacoEditor) {
+                    console.log('🗑️ Disposing existing editor...');
+                    monacoEditor.dispose();
+                }
+
+                // Clear existing models
+                console.log('🧹 Clearing existing models...');
+                monaco.editor.getModels().forEach(model => {
+                    if (models[model.uri.path.substring(1)]) {
+                        model.dispose();
+                    }
+                });
+                models = {};
+
+                monacoEditor = monaco.editor.create(editorElement, {
+                    value: files[currentFile] || '',
+                    language: getLanguageFromFile(currentFile),
+                    theme: 'terraform-dark',
+                    fontSize: 14,
+                    lineNumbers: 'on',
+                    wordWrap: 'on',
+                    minimap: { enabled: true },
+                    scrollBeyondLastLine: false,
+                    automaticLayout: true,
+                    tabSize: 2,
+                    insertSpaces: true,
+                    renderWhitespace: 'selection',
+                    bracketPairColorization: { enabled: true }
+                });
+
+                console.log('📁 Creating models for all files...');
+                // Create models for all files
+                Object.keys(files).forEach(filename => {
+                    try {
+                        const language = getLanguageFromFile(filename);
+                        const uri = monaco.Uri.file(filename);
+                        
+                        // Check if model already exists
+                        let existingModel = monaco.editor.getModel(uri);
+                        if (existingModel) {
+                            existingModel.dispose();
+                        }
+                        
+                        models[filename] = monaco.editor.createModel(
+                            files[filename], 
+                            language, 
+                            uri
+                        );
+                        console.log(`✅ Created model for ${filename} (${language})`);
+                    } catch (error) {
+                        console.error(`❌ Failed to create model for ${filename}:`, error.message);
+                    }
+                });
+
+                // Set initial model
+                console.log(`🎯 Setting initial model: ${currentFile}`);
+                if (models[currentFile]) {
+                    monacoEditor.setModel(models[currentFile]);
+                } else {
+                    console.warn(`⚠️ Model for ${currentFile} not found`);
+                }
+
+                // Listen for content changes
+                console.log('👂 Setting up content change listeners...');
+                monacoEditor.onDidChangeModelContent(() => {
+                    if (models[currentFile]) {
+                        files[currentFile] = monacoEditor.getValue();
+                    }
+                });
+
+                // Add Terraform-specific snippets (only if not already registered)
+                console.log('📋 Registering Terraform code snippets...');
+                monaco.languages.registerCompletionItemProvider('terraform', {
+                    provideCompletionItems: function(model, position) {
+                        const suggestions = [
+                            {
+                                label: 'resource',
+                                kind: monaco.languages.CompletionItemKind.Snippet,
+                                insertText: 'resource "${1:type}" "${2:name}" {\n  ${3}\n}',
+                                insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                                documentation: 'Create a new resource'
+                            },
+                            {
+                                label: 'variable',
+                                kind: monaco.languages.CompletionItemKind.Snippet,
+                                insertText: 'variable "${1:name}" {\n  description = "${2:description}"\n  type        = ${3:string}\n  default     = "${4:default_value}"\n}',
+                                insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                                documentation: 'Create a new variable'
+                            },
+                            {
+                                label: 'output',
+                                kind: monaco.languages.CompletionItemKind.Snippet,
+                                insertText: 'output "${1:name}" {\n  description = "${2:description}"\n  value       = ${3:value}\n}',
+                                insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                                documentation: 'Create a new output'
+                            }
+                        ];
+                        return { suggestions: suggestions };
+                    }
+                });
+
+                console.log('🎉 Monaco Editor initialization completed successfully!');
+                addToTerminal('✅ Terraform Web IDE with Monaco Editor initialized successfully!', 'success');
+                
+            } catch (error) {
+                console.error('💥 Error initializing Monaco Editor:', error);
+                console.error('Stack trace:', error.stack);
+                addToTerminal('❌ Error initializing Monaco Editor: ' + error.message, 'error');
+                
+                // Reset initialization flag on error
+                monacoInitialized = false;
+                
+                // Fallback: Try again after a delay
+                console.log('🔄 Attempting to retry initialization in 3 seconds...');
+                setTimeout(() => {
+                    console.log('🔄 Retrying Monaco Editor initialization...');
+                    initializeMonaco();
+                }, 3000);
+            }
+        }
+
+        function getLanguageFromFile(filename) {
+            if (filename.endsWith('.tf') || filename.endsWith('.tfvars')) {
+                return 'terraform';
+            } else if (filename.endsWith('.md')) {
+                return 'markdown';
+            } else if (filename.endsWith('.json')) {
+                return 'json';
+            } else if (filename.endsWith('.yaml') || filename.endsWith('.yml')) {
+                return 'yaml';
+            }
+            return 'plaintext';
+        }
+
+        function loadFile(filename) {
+            currentFile = filename;
+            document.getElementById('currentFile').textContent = filename;
+            
+            if (monacoEditor && models[filename]) {
+                monacoEditor.setModel(models[filename]);
+            }
+            
+            // Update active states
+            document.querySelectorAll('.file-item').forEach(item => {
+                item.classList.remove('active');
+                if (item.dataset.file === filename) {
+                    item.classList.add('active');
+                }
+            });
+            
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+                if (tab.dataset.file === filename) {
+                    tab.classList.add('active');
+                }
+            });
+        }
+
+        function updateLineNumbers() {
+            // Monaco handles line numbers automatically
+        }
+
+        function highlightSyntax() {
+            // Monaco handles syntax highlighting automatically
+        }
+
+        function openTab(filename) {
+            if (!openTabs.includes(filename)) {
+                openTabs.push(filename);
+                const tabBar = document.getElementById('tabBar');
+                const tab = document.createElement('div');
+                tab.className = 'tab';
+                tab.dataset.file = filename;
+                tab.innerHTML = `${filename}<span class="tab-close" onclick="closeTab(event, '${filename}')">&times;</span>`;
+                tab.onclick = () => loadFile(filename);
+                tabBar.appendChild(tab);
+            }
+            loadFile(filename);
+        }
+
+        function closeTab(event, filename) {
+            event.stopPropagation();
+            const index = openTabs.indexOf(filename);
+            if (index > -1) {
+                openTabs.splice(index, 1);
+                
+                // Remove the tab from the tab bar
+                const tabToRemove = document.querySelector(`.tab[data-file="${filename}"]`);
+                if (tabToRemove) {
+                    tabToRemove.remove();
+                }
+                
+                // If we're closing the current file and there are other tabs open
+                if (currentFile === filename && openTabs.length > 0) {
+                    loadFile(openTabs[openTabs.length - 1]); // Load the last remaining tab
+                } else if (openTabs.length === 0) {
+                    // If no tabs are open, clear the editor
+                    if (monacoEditor) {
+                        monacoEditor.setValue('');
+                    }
+                    document.getElementById('currentFile').textContent = 'No file open';
+                    currentFile = null;
+                }
+            }
+        }
+
+        function saveFile() {
+            if (monacoEditor) {
+                files[currentFile] = monacoEditor.getValue();
+                addToTerminal(`File ${currentFile} saved successfully.`, 'success');
+            }
+        }
+
+        function newFile() {
+            document.getElementById('newFileModal').style.display = 'flex';
+        }
+
+        function closeModal() {
+            document.getElementById('newFileModal').style.display = 'none';
+            document.getElementById('newFileName').value = '';
+        }
+
+        function createFile() {
+            const filename = document.getElementById('newFileName').value.trim();
+            if (filename && !files[filename]) {
+                files[filename] = '';
+                
+                // Create Monaco model for new file
+                if (monacoEditor) {
+                    const language = getLanguageFromFile(filename);
+                    models[filename] = monaco.editor.createModel('', language, monaco.Uri.file(filename));
+                }
+                
+                // Add to file explorer
+                const fileExplorer = document.getElementById('fileExplorer');
+                const fileItem = document.createElement('div');
+                fileItem.className = 'file-item';
+                fileItem.dataset.file = filename;
+                fileItem.innerHTML = `<span class="file-icon">📄</span>${filename}`;
+                fileItem.onclick = () => openTab(filename);
+                fileExplorer.appendChild(fileItem);
+                
+                openTab(filename);
+                closeModal();
+            }
+        }
+
+        function formatCode() {
+            if (monacoEditor) {
+                monacoEditor.getAction('editor.action.formatDocument').run();
+                addToTerminal('Code formatted successfully.', 'success');
+            }
+        }
+
+        function runTerraformCommand(command) {
+            const commands = {
+                'init': 'Initializing Terraform...\n✓ Terraform has been successfully initialized!',
+                'plan': 'Running terraform plan...\n\nPlan: 1 to add, 0 to change, 0 to destroy.',
+                'apply': 'Running terraform apply...\n\nApply complete! Resources: 1 added, 0 changed, 0 destroyed.',
+                'destroy': 'Running terraform destroy...\n\nDestroy complete! Resources: 1 destroyed.'
+            };
+            
+            addToTerminal(`$ terraform ${command}`, 'command');
+            
+            setTimeout(() => {
+                addToTerminal(commands[command] || `terraform ${command} executed.`, 'output');
+            }, 1000);
+        }
+
+        function addToTerminal(text, type = 'output') {
+            const terminal = document.getElementById('terminal');
+            const line = document.createElement('div');
+            line.textContent = text;
+            
+            if (type === 'command') {
+                line.style.color = '#ffff00';
+            } else if (type === 'success') {
+                line.style.color = '#00ff00';
+            } else if (type === 'error') {
+                line.style.color = '#ff0000';
+            }
+            
+            terminal.appendChild(line);
+            terminal.scrollTop = terminal.scrollHeight;
+        }
+
+        function clearTerminal() {
+            document.getElementById('terminal').innerHTML = '';
+        }
+
+        // Event listeners
+        document.querySelectorAll('.file-item').forEach(item => {
+            item.onclick = () => openTab(item.dataset.file);
+        });
+
+        const terminalInput = document.getElementById('terminalInput');
+        terminalInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                const command = terminalInput.value.trim();
+                if (command) {
+                    addToTerminal(`$ ${command}`, 'command');
+                    
+                    // Simulate command execution
+                    setTimeout(() => {
+                        if (command.startsWith('terraform ') || command.startsWith('tf ')) {
+                            const tfCommand = command.replace('tf ', 'terraform ');
+                            addToTerminal(`Executing: ${tfCommand}`, 'output');
+                        } else {
+                            addToTerminal(`Command executed: ${command}`, 'output');
+                        }
+                    }, 500);
+                    
+                    terminalInput.value = '';
+                }
+            }
+        });
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', (e) => {
+            if (e.ctrlKey || e.metaKey) {
+                if (e.key === 's') {
+                    e.preventDefault();
+                    saveFile();
+                } else if (e.key === 'n') {
+                    e.preventDefault();
+                    newFile();
+                }
+            }
+        });
+
+        // Initialize when DOM is ready - single initialization point
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log('🌐 DOM Content Loaded, starting Monaco initialization...');
+            
+            // Add a delay to ensure all scripts are loaded
+            setTimeout(() => {
+                initializeMonaco();
+            }, 1000);
+        });
+    </script>
+</body>
+</html>
